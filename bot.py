@@ -32,6 +32,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     users.setdefault(user_id, {"verified": False, "gender": None, "age": None, "status": None, "partner": None})
     save_users()
+
+    if users[user_id]["verified"]:
+        await update.message.reply_text("✅ Kamu sudah diverifikasi! Gunakan /find untuk mencari partner.")
+        return
+
     keyboard = [
         [InlineKeyboardButton("Laki-laki", callback_data="gender_male"),
          InlineKeyboardButton("Perempuan", callback_data="gender_female")]
@@ -45,6 +50,9 @@ async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = str(query.from_user.id)
+    if users[user_id]["verified"]:
+        await query.edit_message_text("✅ Kamu sudah diverifikasi! Gunakan /find.")
+        return
     users[user_id]["gender"] = "Laki-laki" if "male" in query.data else "Perempuan"
     save_users()
 
@@ -58,6 +66,9 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = str(query.from_user.id)
+    if users[user_id]["verified"]:
+        await query.edit_message_text("✅ Kamu sudah diverifikasi! Gunakan /find.")
+        return
     users[user_id]["age"] = int(query.data.split("_")[1])
     save_users()
 
@@ -72,6 +83,10 @@ async def select_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = str(query.from_user.id)
+    if users[user_id]["verified"]:
+        await query.edit_message_text("✅ Kamu sudah diverifikasi! Gunakan /find.")
+        return
+
     status_map = {
         "status_unnes": "Mahasiswa UNNES",
         "status_other": "Mahasiswa Lain",
@@ -106,7 +121,7 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[target]["verified"] = True
     save_users()
     await query.edit_message_text(f"✅ User {target} diverifikasi!")
-    await context.bot.send_message(target, "✅ Kamu telah diverifikasi admin!")
+    await context.bot.send_message(target, "✅ Kamu telah diverifikasi admin! Gunakan /find untuk mencari partner.")
 
 # ===== FIND / STOP =====
 async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,21 +206,21 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 load_users()
 app = ApplicationBuilder().token(TOKEN).build()
 
-# Handler user
+# User handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("find", find_partner))
 app.add_handler(CommandHandler("stop", stop))
-app.add_handler(CommandHandler("admin", admin_panel))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
+
+# Callback handlers
 app.add_handler(CallbackQueryHandler(select_gender, pattern="^gender_"))
 app.add_handler(CallbackQueryHandler(select_age, pattern="^age_"))
 app.add_handler(CallbackQueryHandler(select_status, pattern="^status_"))
-
-# Handler admin
 app.add_handler(CallbackQueryHandler(admin_approve, pattern="^approve_"))
 app.add_handler(CallbackQueryHandler(admin_menu_handler, pattern="^panel_"))
 
-# Relay chat
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
+# Admin panel
+app.add_handler(CommandHandler("admin", admin_panel))
 
 print("🚀 Bot Anonymous Kampus berjalan...")
 app.run_polling()
