@@ -313,6 +313,27 @@ report_partner_handler = ConversationHandler(
     fallbacks=[CommandHandler('batal', lambda u,c: ConversationHandler.END)]
 )
 
+# ===== BROADCAST ADMIN =====
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in admins:
+        await update.message.reply_text("🚫 Hanya admin yang dapat mengirim broadcast.")
+        return
+    if not context.args:
+        await update.message.reply_text("❗ Gunakan: /broadcast <pesan>")
+        return
+    message_text = " ".join(context.args)
+    count = 0
+    for uid, info in users.items():
+        if is_verified(uid) and not info.get("blocked_at"):
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast dari Admin:\n\n{message_text}")
+                count += 1
+            except:
+                pass
+    await update.message.reply_text(f"✅ Pesan broadcast dikirim ke {count} user.")
+    log_activity(f"Admin {user_id} broadcast ke {count} user: {message_text}")
+
 # ===== CONVERSATION HANDLER =====
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
@@ -338,6 +359,7 @@ app.add_handler(CommandHandler('find', find_partner))
 app.add_handler(CommandHandler('cari_jodoh', cari_jodoh))
 app.add_handler(CommandHandler('stop', stop_chat))
 app.add_handler(CommandHandler('report', report_user))
+app.add_handler(CommandHandler('broadcast', broadcast))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
 if __name__ == '__main__':
