@@ -6,6 +6,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler, ConversationHandler
 )
+import calendar
 
 # ===== KONFIGURASI =====
 TOKEN = os.getenv("TOKEN")
@@ -83,7 +84,6 @@ async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     users[user_id]["gender"] = gender_map.get(query.data, "Lainnya")
 
-    # Tombol umur 18-25
     keyboard = [[InlineKeyboardButton(str(age), callback_data=f"age_{age}") for age in range(18,26)]]
     await query.edit_message_text(
         f"Gender dipilih: {users[user_id]['gender']}\nSekarang pilih umur kamu:",
@@ -159,7 +159,7 @@ async def admin_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_id, text="❌ Permintaan verifikasi ditolak.")
         await query.edit_message_text(f"User {target_id} ditolak ❌")
 
-# ===== BLOCK USER =====
+# ===== BLOCK / UNBLOCK =====
 async def block_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     admin_id = query.from_user.id
@@ -183,7 +183,6 @@ async def block_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(f"⚠️ User {target_id} telah diblokir oleh admin.")
     log_activity(f"Admin {admin_id} memblokir user {target_id}")
 
-# ===== UNBLOCK USER =====
 async def unblock_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     admin_id = query.from_user.id
@@ -202,6 +201,87 @@ async def unblock_user_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except:
         pass
     await query.edit_message_text(f"✅ User {target_id} telah dibuka blokir oleh admin.")
+
+# ===== FIND PARTNER =====
+async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_verified(user_id):
+        await update.message.reply_text("⚠️ Anda harus diverifikasi sebelum mencari partner.")
+        return
+    if users[user_id].get("partner"):
+        await update.message.reply_text("⚠️ Anda sudah terhubung dengan partner. Gunakan /stop untuk berhenti.")
+        return
+    # Cek waiting list
+    for partner_id in waiting_list:
+        if partner_id != user_id and is_verified(partner_id) and not users[partner_id].get("partner"):
+            # Pasangkan
+            users[user_id]["partner"] = partner_id
+            users[partner_id]["partner"] = user_id
+            waiting_list.remove(partner_id)
+            await update.message.reply_text("✅ Partner ditemukan! Mulai chat sekarang.")
+            await context.bot.send_message(chat_id=partner_id, text="✅ Partner ditemukan! Mulai chat sekarang.")
+            log_activity(f"User {user_id} dipasangkan dengan {partner_id}")
+            return
+    # Tambah ke waiting list
+    waiting_list.append(user_id)
+    await update.message.reply_text("⌛ Menunggu partner...")
+    log_activity(f"User {user_id} menunggu partner")
+
+# ===== CARI JODOH (malam minggu 18-23) =====
+async def cari_jodoh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_verified(user_id):
+        await update.message.reply_text("⚠️ Anda harus diverifikasi sebelum mencari jodoh.")
+        return
+    if users[user_id].get("partner"):
+        await update.message.reply_text("⚠️ Anda sudah terhubung dengan partner. Gunakan /stop untuk berhenti.")
+        return
+    now = datetime.now()
+    if now.weekday() != 5 or now.hour < 18 or now.hour > 23:  # Sabtu malam 18-23
+        await update.message.reply_text("⚠️ Fitur cari jodoh hanya bisa digunakan Sabtu malam (18-23).")
+        return
+    # Cari partner lawan jenis
+    for partner_id, info in users.items():
+        if partner_id != user_id and is_verified(partner_id) and not info.get("partner") and info.get("gender") != users[user_id]["gender"]:
+            users[user_id]["partner"] = partner_id
+            users[partner_id]["partner"] = user_id
+            await update.message.reply_text("✅ Partner jodoh ditemukan! Mulai chat sekarang.")
+            await context.bot.send_message(chat_id=partner_id, text="✅ Partner jodoh ditemukan! Mulai chat sekarang.")
+            log_activity(f"User {user_id} dipasangkan dengan {partner_id} (cari_jodoh)")
+            return
+    await update.message.reply_text("⌛ Menunggu partner lawan jenis...")
+    waiting_list.append(user_id)
+    log_activity(f"User {user_id} menunggu partner lawan jenis")
+
+# ===== STOP CHAT =====
+async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    partner_id = users.get(user_id, {}).get("partner")
+    if partner_id:
+        users[partner_id]["partner"] = None
+        users[user_id]["partner"] = None
+        await update.message.reply_text("✋ Anda berhenti chat.")
+        await context.bot.send_message(chat_id=partner_id, text="✋ Partner menghentikan chat.")
+        log_activity(f"User {user_id} berhenti chat dengan {partner_id}")
+    else:
+        await update.message.reply_text("⚠️ Anda tidak sedang chat dengan partner.")
+
+# ===== RELAY PESAN =====
+async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    partner_id = users.get(user_id, {}).get("partner")
+    if partner_id:
+        await context.bot.send_message(chat_id=partner_id, text=update.message.text)
+
+# ===== REPORT USER =====
+async def report_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if len(context.args) != 1:
+        await update.message.reply_text("❗ Gunakan format: /report <user_id>")
+        return
+    target_id = int(context.args[0])
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"🚨 User {user_id} melaporkan user {target_id}")
+    await update.message.reply_text("✅ Laporan telah dikirim ke admin.")
 
 # ===== CONVERSATION HANDLER =====
 conv_handler = ConversationHandler(
@@ -223,8 +303,11 @@ app.add_handler(CallbackQueryHandler(admin_verify, pattern='^(approve|reject)_')
 app.add_handler(CallbackQueryHandler(block_user_callback, pattern='^block_'))
 app.add_handler(CallbackQueryHandler(unblock_user_callback, pattern='^unblock_'))
 app.add_handler(CommandHandler('registeradmin', register_admin))
-
-# TODO: Tambahkan find, cari_jodoh, stop, relay_message, report_user handler seperti versi sebelumnya
+app.add_handler(CommandHandler('find', find_partner))
+app.add_handler(CommandHandler('cari_jodoh', cari_jodoh))
+app.add_handler(CommandHandler('stop', stop_chat))
+app.add_handler(CommandHandler('report', report_user))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
 if __name__ == '__main__':
     print("🚀 Bot Anonymous Kampus berjalan...")
