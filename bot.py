@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler, ConversationHandler
@@ -34,6 +34,7 @@ def is_verified(user_id):
 
 # ===== STATES =====
 UNIVERSITY, GENDER, UMUR = range(3)
+REPORT_REASON = range(1)
 
 # ===== START & VERIFIKASI =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -270,6 +271,48 @@ async def report_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Laporan telah dikirim ke admin.")
     log_activity(f"User {user_id} melaporkan: {report_text}")
 
+# ===== LAPORKAN PARTNER =====
+async def report_partner_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    partner_id = users.get(user_id, {}).get("partner")
+    if not partner_id:
+        await update.message.reply_text("⚠️ Tidak ada partner yang sedang chat.")
+        return ConversationHandler.END
+    context.user_data['report_partner_id'] = partner_id
+    await update.message.reply_text(
+        "✏️ Tulis kesalahan atau alasan laporan partner kamu:",
+        reply_markup=ReplyKeyboardMarkup([["Batal"]], one_time_keyboard=True)
+    )
+    return REPORT_REASON
+
+async def report_partner_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text.lower() == "batal":
+        await update.message.reply_text("❌ Laporan dibatalkan.")
+        return ConversationHandler.END
+
+    reporter_id = update.effective_user.id
+    partner_id = context.user_data.get("report_partner_id")
+
+    report_message = (
+        f"🚨 Laporan Partner:\n"
+        f"Pelapor: {update.effective_user.full_name} (ID: {reporter_id})\n"
+        f"User yang dilaporkan: {partner_id}\n"
+        f"Alasan: {text}"
+    )
+    await context.bot.send_message(chat_id=ADMIN_ID, text=report_message)
+    await update.message.reply_text("✅ Laporan telah dikirim ke admin.")
+    log_activity(f"User {reporter_id} melaporkan partner {partner_id}: {text}")
+    return ConversationHandler.END
+
+report_partner_handler = ConversationHandler(
+    entry_points=[CommandHandler('laporkan', report_partner_start)],
+    states={
+        REPORT_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_partner_reason)]
+    },
+    fallbacks=[CommandHandler('batal', lambda u,c: ConversationHandler.END)]
+)
+
 # ===== CONVERSATION HANDLER =====
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
@@ -286,6 +329,7 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 # ===== HANDLER =====
 app.add_handler(conv_handler)
+app.add_handler(report_partner_handler)
 app.add_handler(CallbackQueryHandler(admin_verify, pattern='^(approve|reject)_'))
 app.add_handler(CallbackQueryHandler(block_user_callback, pattern='^block_'))
 app.add_handler(CallbackQueryHandler(unblock_user_callback, pattern='^unblock_'))
