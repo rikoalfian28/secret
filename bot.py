@@ -59,13 +59,11 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     users[user_id]["university"] = "UNNES" if query.data == "unnes" else "Non-UNNES"
 
-    # Buat tombol umur 18-25
-    age_buttons = [[InlineKeyboardButton(str(age), callback_data=str(age))] for age in range(18,26)]
-    keyboard = age_buttons
-
+    # Buat tombol umur 18-25 dengan prefix "age_"
+    age_buttons = [[InlineKeyboardButton(str(age), callback_data=f"age_{age}")] for age in range(18,26)]
     await query.edit_message_text(
         f"Universitas: {users[user_id]['university']}\nSekarang pilih umur kamu:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(age_buttons)
     )
     return AGE
 
@@ -75,7 +73,8 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
-    age = int(query.data)
+    # Ambil angka umur dari callback_data
+    age = int(query.data.replace("age_", ""))
     users[user_id]["age"] = age
 
     # Kirim request verifikasi ke admin
@@ -202,14 +201,14 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
-        UNIVERSITY: [CallbackQueryHandler(select_university)],
-        AGE: [CallbackQueryHandler(select_age)]
+        UNIVERSITY: [CallbackQueryHandler(select_university, pattern='^(unnes|nonunnes)$')],
+        AGE: [CallbackQueryHandler(select_age, pattern='^age_')]
     },
     fallbacks=[]
 )
 
 app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(conv_handler)
+app.add_handler(conv_handler)  # harus di atas handler lain
 app.add_handler(CallbackQueryHandler(admin_verify))
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
