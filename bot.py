@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -29,7 +29,8 @@ def log_activity(message: str):
     logging.info(message)
 
 def is_verified(user_id):
-    return users.get(user_id, {}).get("verified", False)
+    u = users.get(user_id, {})
+    return u.get("verified", False) and not u.get("blocked_at")
 
 # ===== STATES =====
 UNIVERSITY, GENDER, UMUR = range(3)
@@ -56,10 +57,8 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
-
     users[user_id]["university"] = "UNNES" if query.data == "unnes" else "Non-UNNES"
 
-    # Pilih gender
     keyboard = [
         [InlineKeyboardButton("Laki-laki", callback_data="gender_male")],
         [InlineKeyboardButton("Perempuan", callback_data="gender_female")],
@@ -121,7 +120,6 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=ADMIN_ID, text=text_admin, reply_markup=InlineKeyboardMarkup(keyboard))
     await query.edit_message_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
     log_activity(f"User {user_id} mengirim permintaan verifikasi (Universitas: {users[user_id]['university']}, Gender: {users[user_id]['gender']}, Umur: {umur})")
-
     return ConversationHandler.END
 
 # ===== REGISTER ADMIN =====
@@ -145,15 +143,12 @@ async def register_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-
     if user_id not in admins:
         await query.answer("🚫 Anda bukan admin.", show_alert=True)
         return
-
     await query.answer()
     data = query.data.split('_')
     action, target_id = data[0], int(data[1])
-
     if action == 'approve':
         users[target_id]["verified"] = True
         log_activity(f"Admin {user_id} menyetujui user {target_id}")
@@ -164,10 +159,51 @@ async def admin_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_id, text="❌ Permintaan verifikasi ditolak.")
         await query.edit_message_text(f"User {target_id} ditolak ❌")
 
-# ===== FIND, CARI JODOH, STOP, RELAY, REPORT, BLOCK CALLBACK, JOB UNBLOCK =====
-# (Kode sama seperti versi sebelumnya, tidak berubah)
+# ===== BLOCK USER =====
+async def block_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    admin_id = query.from_user.id
+    if admin_id not in admins:
+        await query.answer("🚫 Anda bukan admin.", show_alert=True)
+        return
+    await query.answer()
+    target_id = int(query.data.split("_")[1])
+    users[target_id]["blocked_at"] = datetime.now()
+    users[target_id]["verified"] = False
+    partner_id = users.get(target_id, {}).get('partner')
+    if partner_id:
+        await context.bot.send_message(chat_id=partner_id, text="🚫 Partner Anda telah diblokir oleh admin.")
+        users[partner_id]['partner'] = None
+    try:
+        await context.bot.send_message(chat_id=target_id, text="⚠️ Akun Anda telah diblokir oleh admin. Hanya admin yang bisa membuka blokir.")
+    except:
+        pass
+    keyboard = [[InlineKeyboardButton("✅ Unblock", callback_data=f"unblock_{target_id}")]]
+    await context.bot.send_message(chat_id=admin_id, text=f"User {target_id} diblokir.", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(f"⚠️ User {target_id} telah diblokir oleh admin.")
+    log_activity(f"Admin {admin_id} memblokir user {target_id}")
 
-# ===== MAIN =====
+# ===== UNBLOCK USER =====
+async def unblock_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    admin_id = query.from_user.id
+    if admin_id not in admins:
+        await query.answer("🚫 Anda bukan admin.", show_alert=True)
+        return
+    await query.answer()
+    target_id = int(query.data.split("_")[1])
+    if target_id not in users or not users[target_id].get("blocked_at"):
+        await query.edit_message_text("⚠️ User tidak sedang diblokir.")
+        return
+    users[target_id]["blocked_at"] = None
+    log_activity(f"Admin {admin_id} membuka blokir user {target_id}")
+    try:
+        await context.bot.send_message(chat_id=target_id, text="✅ Admin telah membuka blokir akun Anda. Anda bisa menggunakan bot kembali.")
+    except:
+        pass
+    await query.edit_message_text(f"✅ User {target_id} telah dibuka blokir oleh admin.")
+
+# ===== CONVERSATION HANDLER =====
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
@@ -178,34 +214,17 @@ conv_handler = ConversationHandler(
     fallbacks=[]
 )
 
+# ===== APP =====
 app = ApplicationBuilder().token(TOKEN).build()
-
-# ===== JOB UNBLOCK OTOMATIS =====
-async def unblock_users(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now()
-    for user_id, data in list(users.items()):
-        blocked_at = data.get("blocked_at")
-        if blocked_at and now - blocked_at >= timedelta(days=30):
-            users[user_id]["blocked_at"] = None
-            log_activity(f"User {user_id} otomatis dibuka blokir setelah 30 hari")
-            try:
-                await context.bot.send_message(chat_id=user_id, text="✅ Akun Anda telah dibuka blokir. Anda bisa menggunakan bot kembali.")
-            except:
-                pass
-
-# Tambahkan JobQueue
-app.job_queue.run_repeating(unblock_users, interval=24*60*60, first=10)
 
 # ===== HANDLER =====
 app.add_handler(conv_handler)
 app.add_handler(CallbackQueryHandler(admin_verify, pattern='^(approve|reject)_'))
 app.add_handler(CallbackQueryHandler(block_user_callback, pattern='^block_'))
+app.add_handler(CallbackQueryHandler(unblock_user_callback, pattern='^unblock_'))
 app.add_handler(CommandHandler('registeradmin', register_admin))
-app.add_handler(CommandHandler('find', find_partner))
-app.add_handler(CommandHandler('cari_jodoh', cari_jodoh))
-app.add_handler(CommandHandler('stop', stop_chat))
-app.add_handler(CommandHandler('report', report_user))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
+
+# TODO: Tambahkan find, cari_jodoh, stop, relay_message, report_user handler seperti versi sebelumnya
 
 if __name__ == '__main__':
     print("🚀 Bot Anonymous Kampus berjalan...")
