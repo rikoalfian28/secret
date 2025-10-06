@@ -1,4 +1,5 @@
 import os, random
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes,
@@ -20,7 +21,6 @@ ADMIN_IDS = [7894393728]  # ganti dengan ID admin kamu
 # HELPER
 # =========================================================
 async def safe_reply(update: Update, text: str, parse_mode=None, reply_markup=None):
-    """Reply yang bisa dipakai untuk message atau callback query"""
     if getattr(update, "message", None):
         return await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     elif getattr(update, "callback_query", None):
@@ -31,7 +31,6 @@ async def safe_reply(update: Update, text: str, parse_mode=None, reply_markup=No
 
 
 def save_chat(user_id, sender, message):
-    """Simpan riwayat chat max 20 pesan terakhir"""
     if user_id not in chat_logs:
         chat_logs[user_id] = []
     chat_logs[user_id].append((sender, message))
@@ -43,12 +42,20 @@ def save_chat(user_id, sender, message):
 # MENU UTAMA
 # =========================================================
 async def show_main_menu(update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, chat_id: int = None):
+    now = datetime.now()
+    day = now.weekday()  # Senin=0 ... Minggu=6
+    hour = now.hour
+
     keyboard = [
         [InlineKeyboardButton("🔍 Find", callback_data="find")],
-        [InlineKeyboardButton("💘 Cari Doi", callback_data="cari_doi")],
         [InlineKeyboardButton("✏️ Ubah Profil", callback_data="ubah_profil")],
         [InlineKeyboardButton("👤 Profil", callback_data="profil")]
     ]
+
+    # Tambahkan tombol "Cari Doi" hanya Sabtu malam sampai Minggu
+    if (day == 5 and hour >= 18) or (day == 6):
+        keyboard.insert(1, [InlineKeyboardButton("💘 Cari Doi", callback_data="cari_doi")])
+
     text = "✅ Kamu sudah diverifikasi!\nPilih tombol untuk memulai percakapan:"
 
     if update and getattr(update, "message", None):
@@ -140,7 +147,7 @@ async def handle_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# PROFIL USER (Detail)
+# PROFIL USER
 # =========================================================
 async def profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -149,7 +156,6 @@ async def profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     profil = users[user_id]
-
     if profil.get("banned"):
         status_text = "🚫 Diblokir Admin"
     elif profil.get("partner"):
@@ -186,10 +192,8 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[user_id]["partner"] = None
     users[user_id]["searching"] = False
     await safe_reply(update, "❌ Kamu keluar dari percakapan / pencarian partner.")
-
-
 # =========================================================
-# REPORT COMMAND
+# REPORT COMMAND (kirim log + tombol ban/unban ke admin)
 # =========================================================
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -218,27 +222,131 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# ADMIN VERIFIKASI & BAN/UNBAN
+# ADMIN: tampilkan profil user (dipanggil dari panel)
 # =========================================================
-async def request_admin_verification(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    u = users[user_id]
-    text = (
-        f"🔔 Permintaan verifikasi baru!\n\n"
-        f"👤 User ID: {user_id}\n"
-        f"🏫 Universitas: {u['university']}\n"
-        f"🚻 Gender: {u['gender']}\n"
-        f"🎂 Usia: {u['age']}\n\n✅ Approve atau ❌ Reject?"
-    )
+async def show_user_profile(context: ContextTypes.DEFAULT_TYPE, chat_id: int, target_id: int):
+    if target_id not in users:
+        await context.bot.send_message(chat_id, f"⚠️ User {target_id} tidak ditemukan.")
+        return
+
+    profil = users[target_id]
+
+    if profil.get("banned"):
+        status_text = "🚫 Diblokir Admin"
+    elif profil.get("partner"):
+        status_text = f"💬 Sedang ngobrol dengan User {profil['partner']}"
+    elif profil.get("searching"):
+        status_text = "🔎 Sedang mencari partner"
+    else:
+        status_text = "⏸️ Idle (tidak mencari / tidak ngobrol)"
+
+    teks = "📝 **Profil User (Detail)**\n"
+    teks += f"🆔 User ID: `{target_id}`\n"
+    teks += f"🏫 Universitas: {profil['university'] or '-'}\n"
+    teks += f"🚻 Gender: {profil['gender'] or '-'}\n"
+    teks += f"🎂 Usia: {profil['age'] or '-'}\n"
+    teks += f"📌 Status Aktivitas: {status_text}\n"
+    teks += f"✅ Verifikasi: {'Sudah' if profil['verified'] else 'Belum'}\n"
+    teks += f"🚫 Banned: {'Ya' if profil.get('banned') else 'Tidak'}\n"
+
     keyboard = [
-        [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}")],
-        [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")],
-        [InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_{user_id}")],
-        [InlineKeyboardButton("✅ Unban User", callback_data=f"unban_{user_id}")]
+        [InlineKeyboardButton("🚫 Ban", callback_data=f"ban_{target_id}"),
+         InlineKeyboardButton("✅ Unban", callback_data=f"unban_{target_id}")]
     ]
-    for admin_id in ADMIN_IDS:
-        await context.bot.send_message(admin_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    await context.bot.send_message(chat_id, teks, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+# =========================================================
+# ADMIN PANEL (daftar sebagai tombol user clickable)
+# =========================================================
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id not in ADMIN_IDS:
+        await safe_reply(update, "❌ Kamu bukan admin.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("📋 Semua User", callback_data="list_users")],
+        [InlineKeyboardButton("✅ Terverifikasi", callback_data="list_verified")],
+        [InlineKeyboardButton("⏳ Belum Verif", callback_data="list_unverified")],
+        [InlineKeyboardButton("🚫 Banned", callback_data="list_banned")]
+    ]
+    await safe_reply(update, "⚙️ Panel Admin:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def admin_panel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    admin_id = query.from_user.id
+
+    if admin_id not in ADMIN_IDS:
+        await query.edit_message_text("❌ Kamu bukan admin.")
+        return
+
+    if action == "list_users":
+        if not users:
+            await query.edit_message_text("📋 Belum ada user terdaftar.")
+            return
+        keyboard = [[InlineKeyboardButton(f"User {uid}", callback_data=f"detail_{uid}")] for uid in users.keys()]
+        await query.edit_message_text("📋 Semua User:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif action == "list_verified":
+        verified = [uid for uid, u in users.items() if u.get("verified")]
+        if not verified:
+            await query.edit_message_text("✅ Tidak ada user terverifikasi.")
+            return
+        keyboard = [[InlineKeyboardButton(f"User {uid}", callback_data=f"detail_{uid}")] for uid in verified]
+        await query.edit_message_text("✅ User Terverifikasi:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif action == "list_unverified":
+        unver = [uid for uid, u in users.items() if not u.get("verified")]
+        if not unver:
+            await query.edit_message_text("⏳ Semua user sudah terverifikasi.")
+            return
+        keyboard = [[InlineKeyboardButton(f"User {uid}", callback_data=f"detail_{uid}")] for uid in unver]
+        await query.edit_message_text("⏳ User Belum Verifikasi:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif action == "list_banned":
+        banned = [uid for uid, u in users.items() if u.get("banned")]
+        if not banned:
+            await query.edit_message_text("🚫 Tidak ada user banned.")
+            return
+        keyboard = [[InlineKeyboardButton(f"User {uid}", callback_data=f"detail_{uid}")] for uid in banned]
+        await query.edit_message_text("🚫 User Banned:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# =========================================================
+# Handler untuk klik detail user (dari daftar)
+# =========================================================
+async def admin_detail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    admin_id = query.from_user.id
+
+    if admin_id not in ADMIN_IDS:
+        await query.edit_message_text("❌ Kamu bukan admin.")
+        return
+
+    parts = query.data.split("_", 1)
+    if len(parts) != 2:
+        await query.edit_message_text("⚠️ Data tidak valid.")
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await query.edit_message_text("⚠️ ID user tidak valid.")
+        return
+
+    # tampilkan profil user di chat admin (menggunakan fungsi show_user_profile)
+    await show_user_profile(context, admin_id, target_id)
+
+
+# =========================================================
+# ADMIN BUTTONS: approve/reject/ban/unban dari verifikasi/report
+# =========================================================
 async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     parts = query.data.split("_")
@@ -250,18 +358,24 @@ async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if action == "approve":
-        users[user_id]["verified"] = True
+        users.setdefault(user_id, {})["verified"] = True
         await query.edit_message_text(f"✅ User {user_id} diverifikasi.")
-        await context.bot.send_message(user_id, "🎉 Profil kamu sudah diverifikasi!")
-        await show_main_menu(context=context, chat_id=user_id)
+        try:
+            await context.bot.send_message(user_id, "🎉 Profil kamu sudah diverifikasi!")
+            await show_main_menu(context=context, chat_id=user_id)
+        except:
+            pass
 
     elif action == "reject":
-        users[user_id]["verified"] = False
+        users.setdefault(user_id, {})["verified"] = False
         await query.edit_message_text(f"❌ User {user_id} ditolak.")
-        await context.bot.send_message(user_id, "⚠️ Verifikasi kamu ditolak. Silakan coba lagi.")
+        try:
+            await context.bot.send_message(user_id, "⚠️ Verifikasi kamu ditolak. Silakan coba lagi.")
+        except:
+            pass
 
     elif action == "ban":
-        users[user_id]["banned"] = True
+        users.setdefault(user_id, {})["banned"] = True
         await query.edit_message_text(f"🚫 User {user_id} telah diblokir oleh admin.")
         try:
             await context.bot.send_message(user_id, "⚠️ Kamu telah diblokir oleh admin dan tidak bisa lagi menggunakan bot.")
@@ -269,7 +383,7 @@ async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
 
     elif action == "unban":
-        users[user_id]["banned"] = False
+        users.setdefault(user_id, {})["banned"] = False
         await query.edit_message_text(f"✅ User {user_id} telah di-unban oleh admin.")
         try:
             await context.bot.send_message(user_id, "✅ Kamu sudah di-unban oleh admin. Silakan gunakan bot kembali.")
@@ -296,11 +410,7 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update, "⚠️ User ID harus berupa angka.")
         return
 
-    if target_id not in users:
-        await safe_reply(update, f"⚠️ User {target_id} tidak ditemukan.")
-        return
-
-    users[target_id]["banned"] = True
+    users.setdefault(target_id, {})["banned"] = True
     await safe_reply(update, f"✅ User {target_id} berhasil diblokir.")
     try:
         await context.bot.send_message(target_id, "⚠️ Kamu telah diblokir oleh admin dan tidak bisa lagi menggunakan bot.")
@@ -324,15 +434,7 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update, "⚠️ User ID harus berupa angka.")
         return
 
-    if target_id not in users:
-        await safe_reply(update, f"⚠️ User {target_id} tidak ditemukan.")
-        return
-
-    if not users[target_id].get("banned", False):
-        await safe_reply(update, f"ℹ️ User {target_id} tidak sedang diblokir.")
-        return
-
-    users[target_id]["banned"] = False
+    users.setdefault(target_id, {})["banned"] = False
     await safe_reply(update, f"✅ User {target_id} sudah di-unban.")
     try:
         await context.bot.send_message(target_id, "✅ Kamu sudah di-unban oleh admin. Silakan gunakan bot kembali.")
@@ -341,12 +443,13 @@ async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# BUTTON HANDLER (MENU)
+# BUTTON HANDLER (MENU) - matching & profile edit
 # =========================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     user_id = query.from_user.id
 
+    # pastikan user di-init
     if user_id not in users:
         users[user_id] = {
             "verified": False, "partner": None,
@@ -356,15 +459,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "banned": False
         }
 
+    # blocking check
+    if users[user_id].get("banned"):
+        await query.edit_message_text("⚠️ Kamu diblokir admin.")
+        return
+
+    # tombol find / cari_doi
     if query.data in ["find", "cari_doi"]:
-        if users[user_id]["partner"]:
+        # jika user sedang ngobrol atau mencari
+        if users[user_id].get("partner"):
             await query.edit_message_text("⚠️ Kamu sedang dalam percakapan. Gunakan /stop untuk keluar.")
             return
-        if users[user_id]["searching"]:
+        if users[user_id].get("searching"):
             await query.edit_message_text("⏳ Kamu sudah mencari partner. Gunakan /stop untuk membatalkan.")
             return
 
-        candidates = [uid for uid, u in users.items() if u["searching"] and uid != user_id and not u.get("banned")]
+        # cari kandidat (hanya yang sudah verif dan tidak banned)
+        candidates = [uid for uid, u in users.items() if u.get("searching") and uid != user_id and u.get("verified") and not u.get("banned")]
         if candidates:
             partner_id = random.choice(candidates)
             users[user_id]["partner"] = partner_id
@@ -383,8 +494,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("UNNES", callback_data="unnes")],
             [InlineKeyboardButton("Non-UNNES", callback_data="nonunnes")]
         ]
-        await query.edit_message_text("✏️ Ubah profil kamu.\nPilih asal universitas:",
-                                      reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("✏️ Ubah profil kamu.\nPilih asal universitas:", reply_markup=InlineKeyboardMarkup(keyboard))
         return UNIVERSITY
 
     elif query.data == "profil":
@@ -402,9 +512,10 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.message.text
         save_chat(user_id, "user", msg)
         save_chat(partner_id, "partner", msg)
+        # kirim pesan ke partner (relayed)
         await context.bot.send_message(partner_id, msg)
     else:
-        await update.message.reply_text("⚠️ Kamu tidak sedang dalam percakapan anonim.")
+        await safe_reply(update, "⚠️ Kamu tidak sedang dalam percakapan anonim.")
 
 
 # =========================================================
@@ -434,12 +545,15 @@ def main():
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("ban", ban))
     app.add_handler(CommandHandler("unban", unban))
+    app.add_handler(CommandHandler("adminpanel", admin_panel))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(admin_button_handler, pattern="^(approve|reject|ban|unban)_"))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CallbackQueryHandler(admin_panel_handler, pattern="^(list_users|list_verified|list_unverified|list_banned)$"))
+    app.add_handler(CallbackQueryHandler(admin_detail_handler, pattern="^detail_"))
+    app.add_handler(CallbackQueryHandler(button_handler))  # catch-all for menu buttons
 
-    # Messages
+    # Relay chat
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
     print("🤖 Bot is running...")
