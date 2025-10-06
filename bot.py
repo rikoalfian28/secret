@@ -12,7 +12,7 @@ TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 SECRET_ADMIN_CODE = os.getenv("SECRET_ADMIN_CODE", "KAMPUS123")
 
-users = {}          # user_id -> {verified: bool, gender: str, partner: int | None, university: str, age: int}
+users = {}          # user_id -> {verified: bool, partner: int | None, university: str, age: int}
 waiting_list = []   # daftar user yang menunggu pasangan
 admins = [ADMIN_ID] # daftar admin
 
@@ -36,7 +36,7 @@ UNIVERSITY, AGE = range(2)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    users[user_id] = users.get(user_id, {"verified": False, "gender": None, "partner": None, "university": None, "age": None})
+    users[user_id] = users.get(user_id, {"verified": False, "partner": None, "university": None, "age": None})
     log_activity(f"User {user_id} memulai bot. Verified: {users[user_id]['verified']}")
 
     keyboard = [
@@ -56,13 +56,18 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     users[user_id]["university"] = "UNNES" if query.data == "unnes" else "Non-UNNES"
-    await query.edit_message_text(f"Universitas: {users[user_id]['university']}\nSekarang masukkan umur kamu (minimal 18 tahun):")
+    await query.edit_message_text(
+        f"Universitas: {users[user_id]['university']}\nSekarang masukkan umur kamu (minimal 18 tahun):"
+    )
     return AGE
 
 async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    text = update.message.text.strip()
+    print(f"DEBUG: menerima input umur dari {user_id}: {text}")  # Debug
+
     try:
-        age = int(update.message.text)
+        age = int(text)
         if age < 18:
             await update.message.reply_text("⚠️ Umur minimal 18 tahun. Tidak bisa mendaftar.")
             return ConversationHandler.END
@@ -72,7 +77,7 @@ async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return AGE
 
     # Kirim request verifikasi ke admin
-    text = (
+    text_admin = (
         f"🔔 Permintaan verifikasi baru:\n"
         f"Nama: {update.effective_user.full_name}\n"
         f"User ID: {user_id}\n"
@@ -83,7 +88,7 @@ async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("✅ Setujui", callback_data=f"approve_{user_id}"),
         InlineKeyboardButton("❌ Tolak", callback_data=f"reject_{user_id}")
     ]]
-    await context.bot.send_message(chat_id=ADMIN_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await context.bot.send_message(chat_id=ADMIN_ID, text=text_admin, reply_markup=InlineKeyboardMarkup(keyboard))
     await update.message.reply_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
     log_activity(f"User {user_id} mengirim permintaan verifikasi (Universitas: {users[user_id]['university']}, Umur: {users[user_id]['age']})")
     return ConversationHandler.END
@@ -195,19 +200,19 @@ conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
         UNIVERSITY: [CallbackQueryHandler(select_university)],
-        AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_age)]
+        AGE: [MessageHandler(filters.TEXT, input_age)]  # filter diperbaiki
     },
     fallbacks=[]
 )
 
 app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(conv_handler)
+app.add_handler(conv_handler)  # harus di atas handler lain
+app.add_handler(CallbackQueryHandler(admin_verify))
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
 app.add_handler(CommandHandler('stop', stop_chat))
 app.add_handler(CommandHandler('lihatlog', lihat_log))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
-app.add_handler(CallbackQueryHandler(admin_verify))
 
 if __name__ == '__main__':
     print("🚀 Bot Anonymous Kampus sedang berjalan...")
