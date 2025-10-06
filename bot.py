@@ -133,7 +133,7 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Anda tidak sedang dalam obrolan.")
 
-# ===== COMMAND: /lihatlog (Hanya Admin) =====
+# ===== COMMAND: /lihatlog =====
 async def lihat_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in admins:
@@ -160,8 +160,16 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== MAIN =====
 app = ApplicationBuilder().token(TOKEN).build()
 
+# Tambahkan semua handler
 app.add_handler(CommandHandler('start', start))
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
 app.add_handler(CommandHandler('stop', stop_chat))
-app.add_handler(CommandH_
+app.add_handler(CommandHandler('lihatlog', lihat_log))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
+app.add_handler(CallbackQueryHandler(admin_verify))
+
+if __name__ == '__main__':
+    print("🚀 Bot Anonymous Kampus sedang berjalan...")
+    log_activity("Bot dimulai pada " + str(datetime.now()))
+    app.run_polling()
