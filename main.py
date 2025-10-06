@@ -8,12 +8,12 @@ from telegram.ext import (
 # === STATE CONSTANTS ===
 UNIVERSITY, GENDER, AGE = range(3)
 
-# === Data sementara (pakai DB di production) ===
+# === Data sementara (pakai DB kalau production) ===
 users = {}       # {user_id: {...}}
 chat_logs = {}   # {user_id: [(sender, pesan), ...]}
 
 # === Daftar Admin ===
-ADMIN_IDS = [123456789]  # ganti ID admin kamu
+ADMIN_IDS = [7894393728]  # ganti dengan ID admin kamu
 
 
 # =========================================================
@@ -67,8 +67,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "verified": False, "partner": None,
             "university": None, "gender": None,
             "age": None, "blocked_at": None,
-            "searching": False
+            "searching": False,
+            "banned": False
         }
+
+    if users[user_id]["banned"]:
+        await safe_reply(update, "⚠️ Kamu telah diblokir admin dan tidak bisa menggunakan bot ini.")
+        return ConversationHandler.END
 
     if users[user_id]["verified"]:
         if users[user_id]["searching"]:
@@ -120,7 +125,12 @@ async def handle_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update, "⚠️ Usia harus berupa angka. Coba lagi:")
         return AGE
 
-    users[user_id]["age"] = int(age_text)
+    age = int(age_text)
+    if age < 18 or age > 25:
+        await safe_reply(update, "⚠️ Usia hanya diperbolehkan 18–25 tahun. Coba lagi:")
+        return AGE
+
+    users[user_id]["age"] = age
     await safe_reply(update, "📩 Data kamu sudah dikirim ke admin untuk diverifikasi. Tunggu ya!")
     await request_admin_verification(user_id, context)
     return ConversationHandler.END
@@ -178,15 +188,19 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_text += f"{prefix}: {msg}\n"
 
     for admin_id in ADMIN_IDS:
+        keyboard = [
+            [InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_{partner_id}")]
+        ]
         await context.bot.send_message(
             chat_id=admin_id,
-            text=f"🚨 LAPORAN USER!\n\nPelapor: {user_id}\nTerlapor: {partner_id}\n\n{log_text}"
+            text=f"🚨 LAPORAN USER!\n\nPelapor: {user_id}\nTerlapor: {partner_id}\n\n{log_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
     await safe_reply(update, "📩 Laporan sudah dikirim ke admin. Terima kasih!")
 
 
 # =========================================================
-# ADMIN VERIFIKASI
+# ADMIN VERIFIKASI & BAN
 # =========================================================
 async def request_admin_verification(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     u = users[user_id]
@@ -199,7 +213,8 @@ async def request_admin_verification(user_id: int, context: ContextTypes.DEFAULT
     )
     keyboard = [
         [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}")],
-        [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")]
+        [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")],
+        [InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_{user_id}")]
     ]
     for admin_id in ADMIN_IDS:
         await context.bot.send_message(admin_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -219,6 +234,45 @@ async def admin_button_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         users[user_id]["verified"] = False
         await query.edit_message_text(f"❌ User {user_id} ditolak.")
         await context.bot.send_message(user_id, "⚠️ Verifikasi kamu ditolak. Silakan coba lagi.")
+
+    elif action == "ban":
+        users[user_id]["banned"] = True
+        await query.edit_message_text(f"🚫 User {user_id} telah diblokir oleh admin.")
+        try:
+            await context.bot.send_message(user_id, "⚠️ Kamu telah diblokir oleh admin dan tidak bisa lagi menggunakan bot.")
+        except:
+            pass
+
+
+# =========================================================
+# BAN MANUAL (COMMAND)
+# =========================================================
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id not in ADMIN_IDS:
+        await safe_reply(update, "❌ Kamu bukan admin.")
+        return
+
+    if not context.args:
+        await safe_reply(update, "⚠️ Gunakan format: /ban <user_id>")
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await safe_reply(update, "⚠️ User ID harus berupa angka.")
+        return
+
+    if target_id not in users:
+        await safe_reply(update, f"⚠️ User {target_id} tidak ditemukan.")
+        return
+
+    users[target_id]["banned"] = True
+    await safe_reply(update, f"✅ User {target_id} berhasil diblokir.")
+    try:
+        await context.bot.send_message(target_id, "⚠️ Kamu telah diblokir oleh admin dan tidak bisa lagi menggunakan bot.")
+    except:
+        pass
 
 
 # =========================================================
@@ -304,7 +358,8 @@ def main():
     app.add_handler(CommandHandler("profil", profil))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("report", report))
-    app.add_handler(CallbackQueryHandler(admin_button_handler, pattern="^(approve|reject)_"))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CallbackQueryHandler(admin_button_handler, pattern="^(approve|reject|ban)_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
