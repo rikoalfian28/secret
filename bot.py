@@ -34,6 +34,7 @@ def is_verified(user_id):
 # ===== VERIFIKASI USER =====
 UNIVERSITY, AGE = range(2)
 
+# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     users[user_id] = users.get(user_id, {"verified": False, "partner": None, "university": None, "age": None})
@@ -50,31 +51,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return UNIVERSITY
 
+# ===== PILIH UNIVERSITAS =====
 async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
 
     users[user_id]["university"] = "UNNES" if query.data == "unnes" else "Non-UNNES"
+
+    # Buat tombol umur 18-25
+    age_buttons = [[InlineKeyboardButton(str(age), callback_data=str(age))] for age in range(18,26)]
+    keyboard = age_buttons
+
     await query.edit_message_text(
-        f"Universitas: {users[user_id]['university']}\nSekarang masukkan umur kamu (minimal 18 tahun):"
+        f"Universitas: {users[user_id]['university']}\nSekarang pilih umur kamu:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return AGE
 
-async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-    print(f"DEBUG: menerima input umur dari {user_id}: {text}")  # Debug
+# ===== PILIH UMUR =====
+async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
 
-    try:
-        age = int(text)
-        if age < 18:
-            await update.message.reply_text("⚠️ Umur minimal 18 tahun. Tidak bisa mendaftar.")
-            return ConversationHandler.END
-        users[user_id]["age"] = age
-    except ValueError:
-        await update.message.reply_text("❌ Masukkan umur dalam angka.")
-        return AGE
+    age = int(query.data)
+    users[user_id]["age"] = age
 
     # Kirim request verifikasi ke admin
     text_admin = (
@@ -89,8 +91,9 @@ async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("❌ Tolak", callback_data=f"reject_{user_id}")
     ]]
     await context.bot.send_message(chat_id=ADMIN_ID, text=text_admin, reply_markup=InlineKeyboardMarkup(keyboard))
-    await update.message.reply_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
+    await query.edit_message_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
     log_activity(f"User {user_id} mengirim permintaan verifikasi (Universitas: {users[user_id]['university']}, Umur: {users[user_id]['age']})")
+
     return ConversationHandler.END
 
 # ===== COMMAND: /registeradmin =====
@@ -200,13 +203,13 @@ conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
         UNIVERSITY: [CallbackQueryHandler(select_university)],
-        AGE: [MessageHandler(filters.TEXT, input_age)]  # filter diperbaiki
+        AGE: [CallbackQueryHandler(select_age)]
     },
     fallbacks=[]
 )
 
 app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(conv_handler)  # harus di atas handler lain
+app.add_handler(conv_handler)
 app.add_handler(CallbackQueryHandler(admin_verify))
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
