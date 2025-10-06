@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -11,9 +11,9 @@ import random
 # ===== KONFIGURASI =====
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-users = {}          # user_id -> {verified, partner, university, gender, age, blocked_at, cari_doi_opted}
-waiting_list = []   # daftar user menunggu find
-cari_doi_list = []  # daftar user menunggu cari_doi
+users = {}          # user_id -> {verified, partner, university, gender, age, blocked_at, find_mode, cari_doi_mode}
+waiting_find = []   # user yang klik find
+waiting_cari_doi = [] # user yang klik cari doi
 admins = [ADMIN_ID] # daftar admin
 
 # ===== LOGGING =====
@@ -27,25 +27,41 @@ def log_activity(message: str):
     print(message)
     logging.info(message)
 
+# ===== HELPER =====
 def is_verified(user_id):
     u = users.get(user_id, {})
     return u.get("verified", False) and not u.get("blocked_at")
 
+def in_weekend_night():
+    now = datetime.now()
+    # malam minggu sampai minggu 23:59
+    return (now.weekday() == 5 and now.hour >= 18) or (now.weekday() == 6)
+
 # ===== STATES =====
 UNIVERSITY, GENDER, UMUR = range(3)
-BROADCAST, BLOCK_USER = range(2)
-ADMIN_VIEW_DETAIL = range(1)
+BROADCAST = range(1)
+BLOCK_USER = range(1)
 
 # ===== START & VERIFIKASI =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in users:
-        users[user_id] = {
-            "verified": False, "partner": None, "university": None,
-            "gender": None, "age": None, "blocked_at": None,
-            "cari_doi_opted": False
-        }
+        users[user_id] = {"verified": False, "partner": None, "university": None,
+                          "gender": None, "age": None, "blocked_at": None,
+                          "find_mode": False, "cari_doi_mode": False}
     log_activity(f"User {user_id} memulai bot. Verified: {users[user_id]['verified']}")
+
+    if is_verified(user_id):
+        keyboard = [
+            [InlineKeyboardButton("🔍 Find", callback_data="find")],
+            [InlineKeyboardButton("💘 Cari Doi", callback_data="cari_doi")]
+        ]
+        await update.message.reply_text(
+            "👋 Selamat datang kembali! Klik tombol untuk mulai percakapan:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ConversationHandler.END
+
     keyboard = [
         [InlineKeyboardButton("UNNES", callback_data="unnes")],
         [InlineKeyboardButton("Non-UNNES", callback_data="nonunnes")]
@@ -67,7 +83,7 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Lainnya", callback_data="gender_other")]
     ]
     await query.edit_message_text(
-        f"Universitas dipilih: {users[user_id]['university']}\nSekarang pilih gender kamu:",
+        f"Universitas dipilih: {users[user_id]['university']}\nPilih gender kamu:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return GENDER
@@ -84,7 +100,7 @@ async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[user_id]["gender"] = gender_map.get(query.data, "Lainnya")
     keyboard = [[InlineKeyboardButton(str(age), callback_data=f"age_{age}") for age in range(18,26)]]
     await query.edit_message_text(
-        f"Gender dipilih: {users[user_id]['gender']}\nSekarang pilih umur kamu:",
+        f"Gender dipilih: {users[user_id]['gender']}\nPilih umur kamu:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return UMUR
@@ -110,7 +126,7 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("❌ Tolak", callback_data=f"reject_{user_id}")
     ]]
     await context.bot.send_message(chat_id=ADMIN_ID, text=text_admin, reply_markup=InlineKeyboardMarkup(keyboard))
-    await query.edit_message_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
+    await query.edit_message_text("✅ Permintaan verifikasi dikirim ke admin. Tunggu persetujuan.")
     log_activity(f"User {user_id} mengirim permintaan verifikasi")
     return ConversationHandler.END
 
@@ -136,15 +152,23 @@ async def admin_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_activity(f"Admin {admin_id} menolak user {target_id}")
 
 # ===== FIND & CARI DOI =====
-def is_weekend_evening():
-    now = datetime.now()
-    # Jumat sore jam 18:00 hingga Minggu 23:59
-    start = now + timedelta(days=(4 - now.weekday()))  # Jumat
-    start = start.replace(hour=18, minute=0, second=0)
-    end = start + timedelta(days=2, hours=5, minutes=59)  # Minggu 23:59
-    return start <= now <= end
+async def select_find_or_cari_doi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    if query.data == "find":
+        users[user_id]["find_mode"] = True
+        users[user_id]["cari_doi_mode"] = False
+        await find_partner(update, context, mode="find")
+    elif query.data == "cari_doi":
+        users[user_id]["cari_doi_mode"] = True
+        users[user_id]["find_mode"] = False
+        if not in_weekend_night():
+            await query.edit_message_text("⚠️ Cari Doi hanya bisa di malam minggu sampai Minggu 23:59.")
+            return
+        await find_partner(update, context, mode="cari_doi")
 
-async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE, mode="find"):
     user_id = update.effective_user.id
     if not is_verified(user_id):
         await update.message.reply_text("⚠️ Harus diverifikasi.")
@@ -152,48 +176,43 @@ async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if users[user_id].get("partner"):
         await update.message.reply_text("⚠️ Sudah terhubung partner. Gunakan /stop untuk berhenti.")
         return
-    waiting = waiting_list
-    random.shuffle(waiting)
-    for partner_id in waiting:
-        if partner_id != user_id and is_verified(partner_id) and not users[partner_id].get("partner"):
-            users[user_id]["partner"] = partner_id
-            users[partner_id]["partner"] = user_id
-            waiting_list.remove(partner_id)
-            await update.message.reply_text("✅ Partner ditemukan! Mulai chat.")
-            await context.bot.send_message(chat_id=partner_id, text="✅ Partner ditemukan! Mulai chat.")
-            log_activity(f"User {user_id} dipasangkan dengan {partner_id}")
-            return
-    if user_id not in waiting_list:
-        waiting_list.append(user_id)
-    online_count = sum(
-        1 for uid, info in users.items() if uid in waiting_list or info.get("partner")
-    )
-    await update.message.reply_text(f"⌛ Menunggu partner...\n📶 Saat ini ada {online_count} user aktif atau menunggu.")
 
-async def cari_doi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_weekend_evening():
-        await update.message.reply_text("⚠️ Cari Doi hanya bisa di malam minggu sampai Minggu jam 23:59")
-        return
-    user_id = update.effective_user.id
-    if not is_verified(user_id):
-        await update.message.reply_text("⚠️ Harus diverifikasi.")
-        return
-    users[user_id]["cari_doi_opted"] = True
-    for partner_id in cari_doi_list:
-        if partner_id != user_id and is_verified(partner_id) and not users[partner_id].get("partner") and users[partner_id]["gender"] != users[user_id]["gender"]:
-            users[user_id]["partner"] = partner_id
-            users[partner_id]["partner"] = user_id
-            cari_doi_list.remove(partner_id)
-            await update.message.reply_text("💖 Partner Doi ditemukan! Mulai chat.")
-            await context.bot.send_message(chat_id=partner_id, text="💖 Partner Doi ditemukan! Mulai chat.")
-            log_activity(f"User {user_id} dipasangkan cari_doi dengan {partner_id}")
-            return
-    if user_id not in cari_doi_list:
-        cari_doi_list.append(user_id)
+    if mode == "find":
+        # random match dengan waiting_find
+        for partner_id in waiting_find:
+            if partner_id != user_id and is_verified(partner_id) and not users[partner_id].get("partner"):
+                users[user_id]["partner"] = partner_id
+                users[partner_id]["partner"] = user_id
+                waiting_find.remove(partner_id)
+                await update.message.reply_text("✅ Partner ditemukan! Mulai chat.")
+                await context.bot.send_message(chat_id=partner_id, text="✅ Partner ditemukan! Mulai chat.")
+                log_activity(f"User {user_id} dipasangkan dengan {partner_id} via FIND")
+                return
+        if user_id not in waiting_find:
+            waiting_find.append(user_id)
+
+    elif mode == "cari_doi":
+        # hanya lawan jenis
+        user_gender = users[user_id]["gender"]
+        for partner_id in waiting_cari_doi:
+            if (partner_id != user_id and is_verified(partner_id) and not users[partner_id].get("partner")
+                and users[partner_id]["gender"] != user_gender):
+                users[user_id]["partner"] = partner_id
+                users[partner_id]["partner"] = user_id
+                waiting_cari_doi.remove(partner_id)
+                await update.message.reply_text("💘 Partner Cari Doi ditemukan! Mulai chat.")
+                await context.bot.send_message(chat_id=partner_id, text="💘 Partner Cari Doi ditemukan! Mulai chat.")
+                log_activity(f"User {user_id} dipasangkan dengan {partner_id} via CARI DOI")
+                return
+        if user_id not in waiting_cari_doi:
+            waiting_cari_doi.append(user_id)
+
+    # tampilkan jumlah user online
     online_count = sum(
-        1 for uid, info in users.items() if uid in cari_doi_list or info.get("partner")
+        1 for uid, info in users.items()
+        if uid != user_id and (uid in waiting_find or uid in waiting_cari_doi or info.get("partner"))
     )
-    await update.message.reply_text(f"⌛ Menunggu partner Doi...\n📶 Saat ini ada {online_count} user aktif yang mencari Doi.")
+    await update.callback_query.edit_message_text(f"⌛ Menunggu partner...\n📶 Saat ini ada {online_count} user aktif atau menunggu.")
 
 # ===== STOP CHAT =====
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,14 +221,14 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner_id:
         users[partner_id]["partner"] = None
         users[user_id]["partner"] = None
-        if user_id in waiting_list: waiting_list.remove(user_id)
-        if user_id in cari_doi_list: cari_doi_list.remove(user_id)
+        if user_id in waiting_find: waiting_find.remove(user_id)
+        if user_id in waiting_cari_doi: waiting_cari_doi.remove(user_id)
         await update.message.reply_text("✋ Anda berhenti chat.")
         await context.bot.send_message(chat_id=partner_id, text="✋ Partner menghentikan chat.")
         log_activity(f"User {user_id} berhenti chat dengan {partner_id}")
     else:
-        if user_id in waiting_list: waiting_list.remove(user_id)
-        if user_id in cari_doi_list: cari_doi_list.remove(user_id)
+        if user_id in waiting_find: waiting_find.remove(user_id)
+        if user_id in waiting_cari_doi: waiting_cari_doi.remove(user_id)
         await update.message.reply_text("⚠️ Tidak sedang chat, berhenti menunggu.")
 
 # ===== RELAY CHAT =====
@@ -229,8 +248,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📶 User Online", callback_data="admin_online")],
         [InlineKeyboardButton("📋 List User", callback_data="admin_list")],
         [InlineKeyboardButton("⏳ Pending Verifikasi", callback_data="admin_pending")],
-        [InlineKeyboardButton("🚫 Blokir/Unblock User", callback_data="admin_block")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")]
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🚫 Block/Unblock User", callback_data="admin_block")]
     ]
     await update.message.reply_text("⚙️ Panel Admin:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -239,43 +258,46 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     await query.answer()
     if query.data == "admin_online":
-        online_count = sum(1 for uid, info in users.items() if uid in waiting_list or info.get("partner"))
+        online_count = sum(1 for uid, info in users.items() if uid in waiting_find or uid in waiting_cari_doi or info.get("partner"))
         await query.edit_message_text(f"📶 User aktif atau menunggu: {online_count}")
     elif query.data == "admin_list":
-        text = "📋 Daftar User:\n"
+        msg = "📋 Daftar User:\n"
         for uid, info in users.items():
-            text += f"ID: {uid}, Verified: {info['verified']}, Partner: {info.get('partner')}, Blocked: {info.get('blocked_at')}\n"
-        await query.edit_message_text(text)
+            msg += f"ID:{uid} Verified:{info.get('verified')} Partner:{info.get('partner')}\n"
+        await query.edit_message_text(msg)
     elif query.data == "admin_pending":
-        text = "⏳ Pending Verifikasi:\n"
+        msg = "⏳ Pending Verifikasi:\n"
         for uid, info in users.items():
-            if not info["verified"] and not info.get("blocked_at"):
-                text += f"ID: {uid}, Univ: {info['university']}, Gender: {info['gender']}, Age: {info['age']}\n"
-        await query.edit_message_text(text)
-    elif query.data == "admin_block":
-        keyboard = [
-            [InlineKeyboardButton("Block User", callback_data="block_user")],
-            [InlineKeyboardButton("Unblock User", callback_data="unblock_user")]
-        ]
-        await query.edit_message_text("Pilih opsi:", reply_markup=InlineKeyboardMarkup(keyboard))
+            if not info.get("verified"):
+                msg += f"ID:{uid} Universitas:{info.get('university')} Gender:{info.get('gender')} Age:{info.get('age')}\n"
+        await query.edit_message_text(msg)
     elif query.data == "admin_broadcast":
         await query.edit_message_text("Kirim pesan untuk broadcast:")
         return BROADCAST
-    elif query.data in ["block_user", "unblock_user"]:
-        for uid in users.keys():
-            if query.data == "block_user":
-                users[uid]["blocked_at"] = datetime.now()
-            else:
-                users[uid]["blocked_at"] = None
-        await query.edit_message_text(f"✅ Semua user {query.data.replace('_',' ')} berhasil")
-        return ConversationHandler.END
+    elif query.data == "admin_block":
+        keyboard = []
+        for uid, info in users.items():
+            text = f"{uid} - {'Blocked' if info.get('blocked_at') else 'Active'}"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"toggle_block_{uid}")])
+        await query.edit_message_text("Klik untuk block/unblock:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_toggle_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = int(query.data.split("_")[-1])
+    info = users.get(uid)
+    if info.get("blocked_at"):
+        info["blocked_at"] = None
+        await query.answer(f"✅ User {uid} di-unblock")
+    else:
+        info["blocked_at"] = datetime.now()
+        await query.answer(f"🚫 User {uid} diblokir")
 
 async def admin_broadcast_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text
     for uid, info in users.items():
         if not info.get("blocked_at"):
             await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast Admin:\n{message}")
-    await update.message.reply_text("✅ Broadcast terkirim ke semua user.")
+    await update.message.reply_text("✅ Broadcast terkirim.")
     return ConversationHandler.END
 
 # ===== START BOT =====
@@ -295,7 +317,8 @@ def main():
     conv_admin = ConversationHandler(
         entry_points=[CommandHandler("panel", admin_panel)],
         states={
-            BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_msg)]
+            BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_msg)],
+            BLOCK_USER: []
         },
         fallbacks=[]
     )
@@ -303,9 +326,9 @@ def main():
     app.add_handler(conv_verif)
     app.add_handler(conv_admin)
     app.add_handler(CallbackQueryHandler(admin_verify, pattern="^(approve|reject)_"))
-    app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_|^block_|^unblock_"))
-    app.add_handler(CommandHandler("find", find_partner))
-    app.add_handler(CommandHandler("cari_doi", cari_doi))
+    app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(admin_toggle_block, pattern="^toggle_block_"))
+    app.add_handler(CallbackQueryHandler(select_find_or_cari_doi, pattern="^(find|cari_doi)$"))
     app.add_handler(CommandHandler("stop", stop_chat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
