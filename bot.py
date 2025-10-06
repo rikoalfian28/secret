@@ -8,7 +8,7 @@ from telegram.ext import (
 
 # ===== KONFIGURASI =====
 TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Ganti dengan token bot kamu
-ADMIN_ID = 123456789               # Ganti dengan ID admin utama
+ADMIN_ID = 7894393728               # Ganti dengan ID admin utama
 SECRET_ADMIN_CODE = "KAMPUS123"    # Ganti dengan kode rahasia untuk menjadi admin
 
 # ===== DATA PENGGUNA =====
