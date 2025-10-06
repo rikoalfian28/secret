@@ -13,7 +13,7 @@ users = {}       # {user_id: {...}}
 chat_logs = {}   # {user_id: [(sender, pesan), ...]}
 
 # === Daftar Admin ===
-ADMIN_IDS = 7894393728  # ganti ID admin kamu
+ADMIN_IDS = [7894393728]  # ganti ID admin kamu
 
 
 # =========================================================
