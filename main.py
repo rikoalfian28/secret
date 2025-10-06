@@ -440,8 +440,6 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
 
     # Messages
-    app.add_handler(Message
-    # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
     print("🤖 Bot is running...")
