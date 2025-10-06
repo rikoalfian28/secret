@@ -13,12 +13,20 @@ users = {}       # {user_id: {...}}
 chat_logs = {}   # {user_id: [(sender, pesan), ...]}
 
 # === Daftar Admin ===
-ADMIN_IDS = [7894393728]  # ganti ID admin kamu
+ADMIN_IDS = [123456789]  # ganti ID admin kamu
 
 
 # =========================================================
-# UTILS
+# HELPER
 # =========================================================
+async def safe_reply(update: Update, text: str, parse_mode=None, reply_markup=None):
+    """Reply yang bisa dipakai untuk message atau callback query"""
+    if update.message:
+        return await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    elif update.callback_query:
+        return await update.callback_query.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
 def save_chat(user_id, sender, message):
     """Simpan riwayat chat max 20 pesan terakhir"""
     if user_id not in chat_logs:
@@ -64,9 +72,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if users[user_id]["verified"]:
         if users[user_id]["searching"]:
-            await update.message.reply_text("⏳ Kamu sedang mencari partner...\nGunakan /stop untuk membatalkan.")
+            await safe_reply(update, "⏳ Kamu sedang mencari partner...\nGunakan /stop untuk membatalkan.")
         elif users[user_id]["partner"]:
-            await update.message.reply_text("💬 Kamu sedang dalam percakapan anonim.\nGunakan /stop untuk mengakhiri.")
+            await safe_reply(update, "💬 Kamu sedang dalam percakapan anonim.\nGunakan /stop untuk mengakhiri.")
         else:
             await show_main_menu(update, context)
         return ConversationHandler.END
@@ -75,10 +83,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("UNNES", callback_data="unnes")],
             [InlineKeyboardButton("Non-UNNES", callback_data="nonunnes")]
         ]
-        await update.message.reply_text(
-            "👋 Selamat datang di Anonymous Kampus!\nPilih asal universitas kamu:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await safe_reply(update, "👋 Selamat datang di Anonymous Kampus!\nPilih asal universitas kamu:",
+                         reply_markup=InlineKeyboardMarkup(keyboard))
         return UNIVERSITY
 
 
@@ -111,11 +117,11 @@ async def handle_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     age_text = update.message.text
     if not age_text.isdigit():
-        await update.message.reply_text("⚠️ Usia harus berupa angka. Coba lagi:")
+        await safe_reply(update, "⚠️ Usia harus berupa angka. Coba lagi:")
         return AGE
 
     users[user_id]["age"] = int(age_text)
-    await update.message.reply_text("📩 Data kamu sudah dikirim ke admin untuk diverifikasi. Tunggu ya!")
+    await safe_reply(update, "📩 Data kamu sudah dikirim ke admin untuk diverifikasi. Tunggu ya!")
     await request_admin_verification(user_id, context)
     return ConversationHandler.END
 
@@ -126,7 +132,7 @@ async def handle_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in users:
-        await update.message.reply_text("⚠️ Kamu belum terdaftar. Gunakan /start untuk memulai.")
+        await safe_reply(update, "⚠️ Kamu belum terdaftar. Gunakan /start untuk memulai.")
         return
 
     profil = users[user_id]
@@ -136,7 +142,7 @@ async def profil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teks += f"🎂 Usia: {profil['age'] or '-'}\n"
     teks += f"✅ Status Verifikasi: {'Sudah' if profil['verified'] else 'Belum'}\n\n"
     teks += "🔒 Profil ini **hanya bisa kamu lihat sendiri**.\nIdentitasmu tetap **anonymous**."
-    await update.message.reply_text(teks, parse_mode="Markdown")
+    await safe_reply(update, teks, parse_mode="Markdown")
 
 
 # =========================================================
@@ -149,9 +155,10 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner_id:
         await context.bot.send_message(chat_id=partner_id, text="❌ Partner keluar dari percakapan.")
         users[partner_id]["partner"] = None
+
     users[user_id]["partner"] = None
     users[user_id]["searching"] = False
-    await update.message.reply_text("❌ Kamu keluar dari percakapan / pencarian partner.")
+    await safe_reply(update, "❌ Kamu keluar dari percakapan / pencarian partner.")
 
 
 # =========================================================
@@ -162,7 +169,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partner_id = users[user_id].get("partner")
 
     if not partner_id:
-        await update.message.reply_text("⚠️ Kamu tidak sedang dalam percakapan anonim.")
+        await safe_reply(update, "⚠️ Kamu tidak sedang dalam percakapan anonim.")
         return
 
     log_text = "📑 Riwayat Chat Terakhir:\n\n"
@@ -175,7 +182,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=admin_id,
             text=f"🚨 LAPORAN USER!\n\nPelapor: {user_id}\nTerlapor: {partner_id}\n\n{log_text}"
         )
-    await update.message.reply_text("📩 Laporan sudah dikirim ke admin. Terima kasih!")
+    await safe_reply(update, "📩 Laporan sudah dikirim ke admin. Terima kasih!")
 
 
 # =========================================================
@@ -249,7 +256,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("UNNES", callback_data="unnes")],
             [InlineKeyboardButton("Non-UNNES", callback_data="nonunnes")]
         ]
-        await query.edit_message_text("✏️ Ubah profil kamu.\nPilih asal universitas:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("✏️ Ubah profil kamu.\nPilih asal universitas:",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
         return UNIVERSITY
 
     elif query.data == "profil":
