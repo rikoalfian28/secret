@@ -9,8 +9,8 @@ from telegram.ext import (
 )
 
 # ===== KONFIGURASI DASAR =====
-TOKEN = os.getenv("TOKEN")  # token bot dari .env
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # isi ID admin Telegram kamu
+TOKEN = os.getenv("TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 users = {}
 waiting = []
@@ -222,7 +222,7 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("📢 Silakan kirim pesan broadcast yang ingin disebar ke semua user.")
 
 
-# ====== BROADCAST ======
+# ====== BROADCAST & CHAT ======
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if context.user_data.get("broadcast_mode") and user_id == ADMIN_ID:
@@ -237,15 +237,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["broadcast_mode"] = False
         await update.message.reply_text(f"✅ Broadcast terkirim ke {sent} user.")
     else:
-        # kirim pesan antar partner
         uid = str(user_id)
         partner = users.get(uid, {}).get("partner")
         if partner:
             await context.bot.send_message(partner, f"💬 {update.message.text}")
 
 
-# ====== MAIN ======
-def main():
+# ====== MAIN (Versi Async - FIX untuk Railway) ======
+async def main():
     load_users()
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -261,8 +260,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 Bot Anonymous Kampus aktif...")
-    app.run_polling()
+    await app.run_polling()
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
