@@ -1,15 +1,13 @@
 import os
 import json
 from datetime import datetime
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 )
 
-# ===== KONFIGURASI =====
+# ===== KONFIG =====
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 SECRET_ADMIN_CODE = os.getenv("SECRET_ADMIN_CODE", "KAMPUS123")
@@ -17,7 +15,6 @@ DATA_FILE = "users.json"
 
 users = {}
 waiting_find = set()
-waiting_jodoh = set()
 admins = [ADMIN_ID]
 
 # ===== LOAD & SAVE =====
@@ -37,28 +34,22 @@ load_data()
 
 def is_verified(uid):
     u = users.get(str(uid), {})
-    return u.get("verified", False) and not u.get("blocked", False)
+    return u.get("verified", False)
 
 # ===== STATES =====
 UNIVERSITY, GENDER, AGE = range(3)
-REPORT_REASON = range(1)
 
 # ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    users[user_id] = users.get(user_id, {
-        "verified": False, "partner": None, "blocked": False,
-        "university": None, "gender": None, "age": None
-    })
+    users[user_id] = users.get(user_id, {"verified": False, "partner": None})
     save_data()
-
     keyboard = [
         [InlineKeyboardButton("UNNES", callback_data="univ_unnes")],
         [InlineKeyboardButton("Non-UNNES", callback_data="univ_nonunnes")]
     ]
     await update.message.reply_text(
-        "👋 Selamat datang di *Anonymous Kampus Bot!*\n\n"
-        "Pilih asal universitas kamu:",
+        "👋 Selamat datang di *Anonymous Kampus Bot!*\nPilih asal universitas kamu:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -71,12 +62,10 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     keyboard = [
         [InlineKeyboardButton("Laki-laki", callback_data="gender_male")],
-        [InlineKeyboardButton("Perempuan", callback_data="gender_female")],
-        [InlineKeyboardButton("Lainnya", callback_data="gender_other")]
+        [InlineKeyboardButton("Perempuan", callback_data="gender_female")]
     ]
     await query.edit_message_text(
-        f"🏫 Universitas: {users[user_id]['university']}\n"
-        "Pilih gender kamu:",
+        f"🏫 Universitas: {users[user_id]['university']}\nPilih gender kamu:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return GENDER
@@ -84,17 +73,11 @@ async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = str(query.from_user.id)
-    gender_map = {
-        "gender_male": "Laki-laki",
-        "gender_female": "Perempuan",
-        "gender_other": "Lainnya"
-    }
-    users[user_id]["gender"] = gender_map[query.data]
+    users[user_id]["gender"] = "Laki-laki" if query.data == "gender_male" else "Perempuan"
     await query.answer()
-    keyboard = [[InlineKeyboardButton(str(age), callback_data=f"age_{age}") for age in range(18, 26)]]
+    keyboard = [[InlineKeyboardButton(str(age), callback_data=f"age_{age}") for age in range(18, 25)]]
     await query.edit_message_text(
-        f"👤 Gender: {users[user_id]['gender']}\n"
-        "Sekarang pilih umur kamu:",
+        f"👤 Gender: {users[user_id]['gender']}\nSekarang pilih umur kamu:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return AGE
@@ -105,7 +88,7 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     age = int(query.data.split("_")[1])
     users[user_id]["age"] = age
     save_data()
-    await query.answer()
+    await query.answer("Dikirim ke admin untuk verifikasi.")
 
     keyboard = [[
         InlineKeyboardButton("✅ Setujui", callback_data=f"approve_{user_id}"),
@@ -113,11 +96,9 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]]
     text = (
         f"🔔 Permintaan verifikasi:\n"
-        f"Nama: {query.from_user.full_name}\n"
-        f"User ID: {user_id}\n"
+        f"Nama: {query.from_user.full_name}\nUser ID: {user_id}\n"
         f"Universitas: {users[user_id]['university']}\n"
-        f"Gender: {users[user_id]['gender']}\n"
-        f"Umur: {age}"
+        f"Gender: {users[user_id]['gender']}\nUmur: {age}"
     )
     await context.bot.send_message(chat_id=ADMIN_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
     await query.edit_message_text("✅ Data kamu dikirim ke admin. Tunggu verifikasi ya.")
@@ -127,12 +108,13 @@ async def select_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    data = query.data.split("_")
+    action, target = data[0], data[1]
+    await query.answer("Diproses...")
     if user_id not in admins:
-        await query.answer("🚫 Bukan admin", show_alert=True)
+        await query.answer("🚫 Bukan admin.", show_alert=True)
         return
 
-    _, action, target = query.data.split("_")
-    target = str(target)
     if action == "approve":
         users[target]["verified"] = True
         await context.bot.send_message(int(target), "✅ Akun kamu telah diverifikasi!")
@@ -155,29 +137,13 @@ async def register_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Kode salah.")
 
-async def verify_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in admins:
-        await update.message.reply_text("🚫 Bukan admin.")
-        return
-    if not context.args:
-        await update.message.reply_text("Gunakan: /verify <user_id>")
-        return
-    uid = context.args[0]
-    if uid not in users:
-        await update.message.reply_text("User tidak ditemukan.")
-        return
-    users[uid]["verified"] = True
-    save_data()
-    await context.bot.send_message(int(uid), "✅ Kamu telah diverifikasi oleh admin.")
-    await update.message.reply_text(f"User {uid} diverifikasi.")
-
 # ===== LIST USER =====
 async def list_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in admins:
         await update.message.reply_text("🚫 Bukan admin.")
         return
     msg = "👥 *Daftar User:*\n\n"
-    for uid, data in list(users.items())[:50]:
+    for uid, data in users.items():
         status = "✅" if data.get("verified") else "⛔"
         msg += f"{uid} — {data.get('university','-')} — {status}\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -195,57 +161,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for uid, data in users.items():
         if is_verified(uid):
             try:
-                await context.bot.send_message(int(uid), f"📢 *Pesan Admin:*\n\n{text}", parse_mode="Markdown")
+                await context.bot.send_message(int(uid), f"📢 Pesan Admin:\n{text}")
                 count += 1
             except:
                 pass
     await update.message.reply_text(f"✅ Broadcast dikirim ke {count} user.")
 
-# ===== MATCHING =====
-async def find_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    if not is_verified(user_id):
-        await update.message.reply_text("⚠️ Kamu belum diverifikasi.")
-        return
-    if users[user_id].get("partner"):
-        await update.message.reply_text("⚠️ Kamu sedang chat. Gunakan /stop untuk keluar.")
-        return
-    for partner_id in waiting_find.copy():
-        if partner_id != user_id and is_verified(partner_id):
-            users[user_id]["partner"] = partner_id
-            users[partner_id]["partner"] = user_id
-            waiting_find.discard(partner_id)
-            await update.message.reply_text("✅ Partner ditemukan! Mulai chat.")
-            await context.bot.send_message(int(partner_id), "✅ Partner ditemukan! Mulai chat.")
-            save_data()
-            return
-    waiting_find.add(user_id)
-    await update.message.reply_text("⌛ Menunggu partner...")
-
-async def stop_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    partner_id = users.get(user_id, {}).get("partner")
-    if partner_id:
-        users[user_id]["partner"] = None
-        users[partner_id]["partner"] = None
-        await context.bot.send_message(int(partner_id), "✋ Partner menghentikan chat.")
-        await update.message.reply_text("✋ Kamu menghentikan chat.")
-        save_data()
-        return
-    if user_id in waiting_find:
-        waiting_find.discard(user_id)
-        await update.message.reply_text("❌ Pencarian dibatalkan.")
-    else:
-        await update.message.reply_text("Tidak ada aktivitas yang sedang berlangsung.")
-
-# ===== RELAY PESAN =====
-async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    partner_id = users.get(user_id, {}).get("partner")
-    if partner_id:
-        await context.bot.send_message(int(partner_id), text=update.message.text)
-
-# ===== HANDLER =====
+# ===== MAIN =====
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
@@ -257,16 +179,11 @@ conv_handler = ConversationHandler(
 )
 
 app = ApplicationBuilder().token(TOKEN).build()
-
 app.add_handler(conv_handler)
 app.add_handler(CallbackQueryHandler(admin_verify, pattern='^(approve|reject)_'))
 app.add_handler(CommandHandler('registeradmin', register_admin))
-app.add_handler(CommandHandler('verify', verify_manual))
 app.add_handler(CommandHandler('listuser', list_user))
 app.add_handler(CommandHandler('broadcast', broadcast))
-app.add_handler(CommandHandler('find', find_partner))
-app.add_handler(CommandHandler('stop', stop_all))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay))
 
 if __name__ == "__main__":
     print("🚀 Bot Anonymous Kampus berjalan...")
