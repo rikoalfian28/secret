@@ -1,3 +1,4 @@
+import os
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,16 +8,16 @@ from telegram.ext import (
 )
 
 # ===== KONFIGURASI =====
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # Ganti dengan token bot kamu
-ADMIN_ID = 7894393728               # Ganti dengan ID admin utama
-SECRET_ADMIN_CODE = "KAMPUS123"    # Ganti dengan kode rahasia untuk menjadi admin
+TOKEN = os.getenv("TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+SECRET_ADMIN_CODE = os.getenv("SECRET_ADMIN_CODE", "KAMPUS123")
 
-# ===== DATA PENGGUNA =====
-users = {}          # user_id -> {verified: bool, gender: str, partner: int | None}
-waiting_list = []   # daftar user yang menunggu pasangan
-admins = [ADMIN_ID] # daftar admin
+users = {}
+waiting_list = []
+admins = [ADMIN_ID]
 
 # ===== LOGGING =====
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     filename="logs/activity.log",
     level=logging.INFO,
@@ -141,7 +142,7 @@ async def lihat_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         with open("logs/activity.log", "r") as f:
-            log_content = f.readlines()[-15:]  # tampilkan 15 log terakhir
+            log_content = f.readlines()[-15:]
         await update.message.reply_text("📜 Log Aktivitas Terakhir:\n" + "".join(log_content))
     except FileNotFoundError:
         await update.message.reply_text("❌ Belum ada log aktivitas.")
@@ -163,11 +164,4 @@ app.add_handler(CommandHandler('start', start))
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
 app.add_handler(CommandHandler('stop', stop_chat))
-app.add_handler(CommandHandler('lihatlog', lihat_log))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
-app.add_handler(CallbackQueryHandler(admin_verify))
-
-if __name__ == '__main__':
-    print("🚀 Bot Anonymous Kampus sedang berjalan...")
-    log_activity("Bot dimulai pada " + str(datetime.now()))
-    app.run_polling()
+app.add_handler(CommandH_
