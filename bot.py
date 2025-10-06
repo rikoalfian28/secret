@@ -4,7 +4,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    filters, ContextTypes, CallbackQueryHandler
+    filters, ContextTypes, CallbackQueryHandler, ConversationHandler
 )
 
 # ===== KONFIGURASI =====
@@ -12,9 +12,9 @@ TOKEN = os.getenv("TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 SECRET_ADMIN_CODE = os.getenv("SECRET_ADMIN_CODE", "KAMPUS123")
 
-users = {}
-waiting_list = []
-admins = [ADMIN_ID]
+users = {}          # user_id -> {verified: bool, gender: str, partner: int | None, university: str, age: int}
+waiting_list = []   # daftar user yang menunggu pasangan
+admins = [ADMIN_ID] # daftar admin
 
 # ===== LOGGING =====
 os.makedirs("logs", exist_ok=True)
@@ -31,29 +31,62 @@ def log_activity(message: str):
 def is_verified(user_id):
     return users.get(user_id, {}).get("verified", False)
 
-# ===== COMMAND: /start =====
+# ===== VERIFIKASI USER =====
+UNIVERSITY, AGE = range(2)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    users[user_id] = users.get(user_id, {"verified": False, "gender": None, "partner": None})
+    users[user_id] = users.get(user_id, {"verified": False, "gender": None, "partner": None, "university": None, "age": None})
     log_activity(f"User {user_id} memulai bot. Verified: {users[user_id]['verified']}")
 
+    keyboard = [
+        [InlineKeyboardButton("UNNES", callback_data="unnes")],
+        [InlineKeyboardButton("Non-UNNES", callback_data="nonunnes")]
+    ]
     await update.message.reply_text(
-        "👋 Selamat datang di *Anonymous Kampus*\n\n"
-        "Untuk menggunakan bot ini, Anda harus diverifikasi oleh admin terlebih dahulu.\n"
-        "Kirim perintah /find setelah disetujui.",
-        parse_mode="Markdown"
+        "👋 Selamat datang di Anonymous Kampus!\n"
+        "Sebelum mulai, pilih asal universitas kamu:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    return UNIVERSITY
 
+async def select_university(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    users[user_id]["university"] = "UNNES" if query.data == "unnes" else "Non-UNNES"
+    await query.edit_message_text(f"Universitas: {users[user_id]['university']}\nSekarang masukkan umur kamu (minimal 18 tahun):")
+    return AGE
+
+async def input_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        age = int(update.message.text)
+        if age < 18:
+            await update.message.reply_text("⚠️ Umur minimal 18 tahun. Tidak bisa mendaftar.")
+            return ConversationHandler.END
+        users[user_id]["age"] = age
+    except ValueError:
+        await update.message.reply_text("❌ Masukkan umur dalam angka.")
+        return AGE
+
+    # Kirim request verifikasi ke admin
     text = (
         f"🔔 Permintaan verifikasi baru:\n"
         f"Nama: {update.effective_user.full_name}\n"
-        f"User ID: {user_id}"
+        f"User ID: {user_id}\n"
+        f"Universitas: {users[user_id]['university']}\n"
+        f"Umur: {users[user_id]['age']}"
     )
     keyboard = [[
         InlineKeyboardButton("✅ Setujui", callback_data=f"approve_{user_id}"),
         InlineKeyboardButton("❌ Tolak", callback_data=f"reject_{user_id}")
     ]]
     await context.bot.send_message(chat_id=ADMIN_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("✅ Permintaan verifikasi telah dikirim ke admin. Tunggu persetujuan.")
+    log_activity(f"User {user_id} mengirim permintaan verifikasi (Universitas: {users[user_id]['university']}, Umur: {users[user_id]['age']})")
+    return ConversationHandler.END
 
 # ===== COMMAND: /registeradmin =====
 async def register_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -158,10 +191,17 @@ async def relay_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❗ Anda belum terhubung dengan siapa pun.")
 
 # ===== MAIN =====
-app = ApplicationBuilder().token(TOKEN).build()
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler('start', start)],
+    states={
+        UNIVERSITY: [CallbackQueryHandler(select_university)],
+        AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_age)]
+    },
+    fallbacks=[]
+)
 
-# Tambahkan semua handler
-app.add_handler(CommandHandler('start', start))
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(conv_handler)
 app.add_handler(CommandHandler('registeradmin', register_admin))
 app.add_handler(CommandHandler('find', find_partner))
 app.add_handler(CommandHandler('stop', stop_chat))
