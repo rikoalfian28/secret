@@ -187,27 +187,25 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text += f"{verif} {uid} | {data['gender']} | {data['age']} | {data['status']}\n"
         await query.edit_message_text(text)
 
-# ===== MAIN =====
-async def main():
-    load_users()
-    app = ApplicationBuilder().token(TOKEN).build()
+# ===== RUN BOT =====
+load_users()
+app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("find", find_partner))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("admin", admin_panel))
+# Handler user
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("find", find_partner))
+app.add_handler(CommandHandler("stop", stop))
+app.add_handler(CommandHandler("admin", admin_panel))
+app.add_handler(CallbackQueryHandler(select_gender, pattern="^gender_"))
+app.add_handler(CallbackQueryHandler(select_age, pattern="^age_"))
+app.add_handler(CallbackQueryHandler(select_status, pattern="^status_"))
 
-    app.add_handler(CallbackQueryHandler(select_gender, pattern="^gender_"))
-    app.add_handler(CallbackQueryHandler(select_age, pattern="^age_"))
-    app.add_handler(CallbackQueryHandler(select_status, pattern="^status_"))
-    app.add_handler(CallbackQueryHandler(admin_approve, pattern="^approve_"))
-    app.add_handler(CallbackQueryHandler(admin_menu_handler, pattern="^panel_"))
+# Handler admin
+app.add_handler(CallbackQueryHandler(admin_approve, pattern="^approve_"))
+app.add_handler(CallbackQueryHandler(admin_menu_handler, pattern="^panel_"))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
+# Relay chat
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, relay_message))
 
-    print("🚀 Bot berjalan...")
-    await app.run_polling()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+print("🚀 Bot Anonymous Kampus berjalan...")
+app.run_polling()
