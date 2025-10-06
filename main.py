@@ -343,6 +343,30 @@ async def admin_detail_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # tampilkan profil user di chat admin (menggunakan fungsi show_user_profile)
     await show_user_profile(context, admin_id, target_id)
 
+# =========================================================
+# ADMIN VERIFIKASI (kirim ke admin)
+# =========================================================
+async def request_admin_verification(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    u = users[user_id]
+    text = (
+        f"🔔 Permintaan verifikasi baru!\n\n"
+        f"👤 User ID: {user_id}\n"
+        f"🏫 Universitas: {u['university']}\n"
+        f"🚻 Gender: {u['gender']}\n"
+        f"🎂 Usia: {u['age']}\n\n✅ Approve atau ❌ Reject?"
+    )
+    keyboard = [
+        [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}")],
+        [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")],
+        [InlineKeyboardButton("🚫 Ban User", callback_data=f"ban_{user_id}")],
+        [InlineKeyboardButton("✅ Unban User", callback_data=f"unban_{user_id}")]
+    ]
+    for admin_id in ADMIN_IDS:
+        try:
+            print(f"DEBUG: Kirim verifikasi ke admin {admin_id}")
+            await context.bot.send_message(admin_id, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            print(f"ERROR kirim ke admin {admin_id}: {e}")
 
 # =========================================================
 # ADMIN BUTTONS: approve/reject/ban/unban dari verifikasi/report
